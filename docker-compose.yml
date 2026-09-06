@@ -1,0 +1,131 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-surveillance}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-surveillance}
+      POSTGRES_DB: ${POSTGRES_DB:-surveillance}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-surveillance} -d ${POSTGRES_DB:-surveillance}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  mediamtx:
+    image: bluenviron/mediamtx:1.9.3
+    ports:
+      - "8554:8554"
+      - "8889:8889"
+      - "8189:8189/udp"
+      - "9997:9997"
+    environment:
+      MTX_WEBRTC: "yes"
+      MTX_WEBRTCADDRESS: ":8889"
+      MTX_WEBRTCICEHOSTNAT1TO1IPS: "127.0.0.1"
+      MTX_WEBRTCALLOWORIGIN: "*"
+      MTX_API: "yes"
+      MTX_APIADDRESS: ":9997"
+
+  ffmpeg-testcam:
+    image: lscr.io/linuxserver/ffmpeg:version-6.0-cli
+    depends_on:
+      - mediamtx
+    volumes:
+      - ./demo-assets:/demo-assets:ro
+    command:
+      - -re
+      - -loop
+      - "1"
+      - -framerate
+      - "25"
+      - -i
+      - /demo-assets/person-demo-frame.png
+      - -vf
+      - scale=1280:720,format=yuv420p
+      - -c:v
+      - libx264
+      - -profile:v
+      - baseline
+      - -level:v
+      - "3.1"
+      - -bf
+      - "0"
+      - -g
+      - "50"
+      - -preset
+      - veryfast
+      - -tune
+      - zerolatency
+      - -f
+      - rtsp
+      - rtsp://mediamtx:8554/testcam
+    restart: unless-stopped
+
+  api:
+    build:
+      context: ./api
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgres://surveillance:surveillance@postgres:5432/surveillance}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
+      JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
+      API_PORT: ${API_PORT:-3000}
+      PUBLIC_WEBRTC_BASE_URL: ${PUBLIC_WEBRTC_BASE_URL:-http://localhost:8889}
+      ALERT_DEDUPE_SECONDS: ${ALERT_DEDUPE_SECONDS:-10}
+    ports:
+      - "3000:3000"
+
+  worker:
+    build:
+      context: ./worker
+    depends_on:
+      redis:
+        condition: service_healthy
+      mediamtx:
+        condition: service_started
+    environment:
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
+      MEDIAMTX_RTSP_URL: ${MEDIAMTX_RTSP_URL:-rtsp://mediamtx:8554}
+      WORKER_CONSUMER_NAME: ${WORKER_CONSUMER_NAME:-worker-1}
+      DETECTION_CONFIDENCE: ${DETECTION_CONFIDENCE:-0.35}
+      DETECTION_INTERVAL_MS: ${DETECTION_INTERVAL_MS:-500}
+      PYTHONUNBUFFERED: "1"
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        VITE_API_URL: ${PUBLIC_API_URL:-http://localhost:3000}
+        VITE_WS_URL: ${PUBLIC_WS_URL:-ws://localhost:3000/ws}
+    depends_on:
+      - api
+    ports:
+      - "5173:80"
+
+  frontend-test:
+    profiles: ["test"]
+    build:
+      context: ./frontend
+      target: test
+
+volumes:
+  postgres-data:

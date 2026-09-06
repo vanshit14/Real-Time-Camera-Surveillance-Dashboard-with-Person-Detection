@@ -1,0 +1,294 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: surveillance
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: surveillance-secrets
+  namespace: surveillance
+type: Opaque
+stringData:
+  POSTGRES_PASSWORD: surveillance
+  JWT_SECRET: change-me-in-production
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: surveillance-config
+  namespace: surveillance
+data:
+  POSTGRES_USER: surveillance
+  POSTGRES_DB: surveillance
+  DATABASE_URL: postgres://surveillance:surveillance@postgres:5432/surveillance
+  REDIS_URL: redis://redis:6379
+  PUBLIC_WEBRTC_BASE_URL: http://localhost:8889
+  PUBLIC_API_URL: http://localhost:3000
+  PUBLIC_WS_URL: ws://localhost:3000/ws
+  MEDIAMTX_RTSP_URL: rtsp://mediamtx:8554
+  ALERT_DEDUPE_SECONDS: "10"
+  DETECTION_CONFIDENCE: "0.35"
+  DETECTION_INTERVAL_MS: "500"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+  namespace: surveillance
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          ports:
+            - containerPort: 5432
+          envFrom:
+            - configMapRef:
+                name: surveillance-config
+            - secretRef:
+                name: surveillance-secrets
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              memory: 512Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: surveillance
+spec:
+  selector:
+    app: postgres
+  ports:
+    - port: 5432
+      targetPort: 5432
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  namespace: surveillance
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+    spec:
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          ports:
+            - containerPort: 6379
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              memory: 256Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  namespace: surveillance
+spec:
+  selector:
+    app: redis
+  ports:
+    - port: 6379
+      targetPort: 6379
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mediamtx
+  namespace: surveillance
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mediamtx
+  template:
+    metadata:
+      labels:
+        app: mediamtx
+    spec:
+      containers:
+        - name: mediamtx
+          image: bluenviron/mediamtx:1.9.3
+          ports:
+            - containerPort: 8554
+            - containerPort: 8889
+            - containerPort: 8189
+              protocol: UDP
+            - containerPort: 9997
+          env:
+            - name: MTX_WEBRTC
+              value: "yes"
+            - name: MTX_WEBRTCALLOWORIGIN
+              value: "*"
+            - name: MTX_WEBRTCICEHOSTNAT1TO1IPS
+              value: "127.0.0.1"
+            - name: MTX_API
+              value: "yes"
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              memory: 512Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mediamtx
+  namespace: surveillance
+spec:
+  selector:
+    app: mediamtx
+  ports:
+    - name: rtsp
+      port: 8554
+      targetPort: 8554
+    - name: webrtc
+      port: 8889
+      targetPort: 8889
+    - name: webrtc-ice
+      port: 8189
+      targetPort: 8189
+      protocol: UDP
+    - name: api
+      port: 9997
+      targetPort: 9997
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+  namespace: surveillance
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: api
+  template:
+    metadata:
+      labels:
+        app: api
+    spec:
+      containers:
+        - name: api
+          image: surveillance-api:local
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 3000
+          envFrom:
+            - configMapRef:
+                name: surveillance-config
+            - secretRef:
+                name: surveillance-secrets
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              memory: 512Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: api
+  namespace: surveillance
+spec:
+  selector:
+    app: api
+  ports:
+    - port: 3000
+      targetPort: 3000
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: worker
+  namespace: surveillance
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: worker
+  template:
+    metadata:
+      labels:
+        app: worker
+    spec:
+      containers:
+        - name: worker
+          image: surveillance-worker:local
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef:
+                name: surveillance-config
+          resources:
+            requests:
+              cpu: 500m
+              memory: 1Gi
+            limits:
+              memory: 2Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+  namespace: surveillance
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: frontend
+  template:
+    metadata:
+      labels:
+        app: frontend
+    spec:
+      containers:
+        - name: frontend
+          image: surveillance-frontend:local
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 80
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              memory: 256Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend
+  namespace: surveillance
+spec:
+  type: NodePort
+  selector:
+    app: frontend
+  ports:
+    - port: 80
+      targetPort: 80
+      nodePort: 30517
