@@ -95,12 +95,6 @@ Realtime:
 
 ## Canonical Event Format
 
-The shared command/event contract is documented in:
-
-```text
-docs/event-format.md
-```
-
 The worker, Redis event stream, API, database mapping, and WebSocket payload use this core alert shape:
 
 ```json
@@ -143,15 +137,6 @@ docker compose run --rm --no-deps worker python -m pytest -q
 ```
 
 The tests cover event encoding, camera validation, ownership-scoped database queries, authenticated HTTP camera routes, frontend authentication/dashboard smoke behavior, and worker command recovery.
-
-## Project Guides
-
-- `docs/architecture.md`: beginner-friendly service and data-flow explanation.
-- `docs/docker-compose-walkthrough.md`: Compose services, ports, and environment variables.
-- `docs/worker-walkthrough.md`: Python detection-worker walkthrough.
-- `docs/event-format.md`: Redis and WebSocket contracts.
-- `docs/troubleshooting.md`: pipeline-first debugging commands.
-- `docs/demo-script.md`: five-minute interview walkthrough.
 
 ## Kubernetes
 
