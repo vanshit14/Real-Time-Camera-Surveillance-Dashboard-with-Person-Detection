@@ -13,3 +13,4 @@ models/
 uploads/
 .docs/
 AGENTS.md
+.tools/
